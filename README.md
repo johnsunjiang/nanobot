@@ -36,23 +36,7 @@
 
 🐈 **nanobot** is an ultra-lightweight, open-source, self-hosted personal AI agent framework written in Python. Use it in a browser, terminal, or chat app to work with files, remember preferences, and schedule tasks. Connect a supported model provider or local model server to supply the AI.
 
-## 本仓库与上游同步
-
-本仓库是 [johnsunjiang/nanobot](https://github.com/johnsunjiang/nanobot)。`main` 的文件树与上游 [HKUDS/nanobot](https://github.com/HKUDS/nanobot) tag `v0.4.0`（`8f7a7d17590de7ab187650381894dba2b9e060ab`）一致。
-
-只把上游当作只读 remote，并且只跟 release tag：
-
-```bash
-git remote add upstream https://github.com/HKUDS/nanobot.git
-git fetch upstream --tags
-```
-
-- `upstream` 只用于 fetch。不要向 HKUDS/nanobot 推送，也不要向上游开 pull request。
-- 只同步上游 **release tag**。不要合并 tag 之后的上游 `main` 提交。
-- 同步结果用分支和 pull request 进入本仓库的 `main`。禁止 force-push。
-- `scripts/sync-upstream.sh` 目前只打印这些步骤，不会 fetch，也不会 push。
-
-操作说明见 [CONTRIBUTING.md](./CONTRIBUTING.md) 的「上游同步」。
+Family checkout and upstream sync: [docs/family/upstream-sync.md](./docs/family/upstream-sync.md).
 
 ## Start Here
 

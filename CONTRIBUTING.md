@@ -48,35 +48,18 @@ WebUI and remote-host interface changes must follow the [client/host compatibili
 
 ### Starting Work
 
-Before making changes, sync this repository's `main` and create a topic branch.
+Before making changes, sync your local checkout and create a topic branch.
 
 ```bash
-git fetch origin
+git fetch upstream
 git switch main
-git pull --ff-only origin main
+git pull --ff-only upstream main
 git switch -c your-topic-branch
 ```
 
-Do not fast-forward this `main` from upstream `main`. Upstream sync for this repository is the next section: release tags only, a pull request into this `main`, and no force-push.
+Use your primary HKUDS/nanobot remote in place of `upstream` if your checkout uses a different remote name.
 
 Keep unrelated local changes out of the topic branch. If your checkout already has work in progress, use a separate worktree or finish that work before starting a new branch.
-
-### 上游同步
-
-本仓库的上游是 https://github.com/HKUDS/nanobot 。每个克隆配置一次只读 remote：
-
-```bash
-git remote add upstream https://github.com/HKUDS/nanobot.git
-git fetch upstream --tags
-```
-
-同步规则：
-
-- 只跟上游 **release tag**（例如 `v0.4.0`）。不要把上游 `main` 上、该 tag 之后的提交合进来。
-- 在分支上整理同步结果，向本仓库的 `main` 开 pull request。
-- 禁止 force-push。
-- 不要向 `upstream` 推送，也不要向 HKUDS/nanobot 开 pull request。
-- `scripts/sync-upstream.sh` 是占位脚本，只打印上述步骤，退出码为 0。它还不会 fetch、合并或推送。
 
 ## Development Setup
 

@@ -16,4 +16,6 @@ upstream sync 还没实现。下面是以后要做的事。这个脚本现在不
 3. 从本仓库 main 拉出分支，把该 tag 同步进来。
 4. 向本仓库的 main 开 pull request。
 5. 禁止 force-push。不要向 HKUDS/nanobot 推送或开 pull request。
+
+说明：docs/family/upstream-sync.md
 EOF
