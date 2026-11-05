@@ -10,9 +10,9 @@
 
 ### 次要 2 的格式检查和 shellcheck
 
-`ruff check ext deploy scripts` 已进 CI。`ruff format --check` 只跑 `ext`、`deploy` 和 `scripts/config_lint.py`。
+`ruff check ext deploy scripts` 已进 CI。`ruff format --check` 跑 `ext`、`deploy` 和 `scripts/family`。家庭 Python 脚本放在 `scripts/family/`，`config_lint.py` 在这里。
 
-对整个 `scripts/` 跑 `ruff format --check` 会改写 15 个上游脚本。上游 CONTRIBUTING 写明这棵树早于 `ruff format`，不要把格式化混进功能改动，同步时也会变成大冲突。shellcheck 同样没加：审查建议过，这次要求的是 ruff 范围；仓库里家庭侧只有 `scripts/sync-upstream.sh` 这一个占位脚本。
+对整个 `scripts/` 跑 `ruff format --check` 会改写 15 个上游脚本。上游 CONTRIBUTING 写明这棵树早于 `ruff format`，不要把格式化混进功能改动，同步时也会变成大冲突。shellcheck 同样没加：审查建议过，这次要求的是 ruff 范围；仓库里家庭侧的 shell 仍是 `scripts/sync-upstream.sh` 这一个占位脚本。
 
 ### 次要 8
 
