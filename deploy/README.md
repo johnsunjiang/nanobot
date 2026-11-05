@@ -6,4 +6,4 @@
 
 - 生产 Compose、维护模式 Compose、镜像构建和备份脚本以后再加。
 - 服务器上的密钥不进这个仓库。
-- 本目录里一旦出现 JSON，CI 的 `config-lint` 会检查它能被解析，并且名字里带 key、secret、token、password 的字段值必须正好是 `${VAR}`。文件名里带 `config` 的 JSON 还会用 nanobot 真正加载一次。
+- 本目录里一旦出现 JSON，CI 的 `config-lint` 会检查它能被解析。字符串字段在名字以 apiKey、key、secret、token 或 password 结尾时必须正好是 `${VAR}`；整数、布尔和 null 不当成密钥，所以 `maxTokens`、`contextWindowTokens`、`inlineKeyboards` 写字面量。`identityKey` 是公开标识，不是密钥。文件名里带 `config` 的 JSON 还会用 nanobot 真正加载一次，类型字段要写字面量，不能写 `${ENV}`。

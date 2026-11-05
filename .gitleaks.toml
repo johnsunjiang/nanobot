@@ -7,14 +7,15 @@ useDefault = true
 [[rules]]
 id = "family-model-sk-hex"
 description = "Provider key shaped like sk- plus 32 hex characters"
-regex = '''sk-[a-f0-9]{32}'''
+regex = '''sk-[A-Fa-f0-9]{32}'''
 keywords = ["sk-"]
 
 [[rules]]
-id = "family-feishu-app-id"
-description = "Feishu or Lark app id"
-regex = '''cli_[a-z0-9]{16}'''
-keywords = ["cli_"]
+id = "family-model-sk"
+description = "Provider key shaped like sk- plus 32 or more token characters"
+regex = '''sk-[A-Za-z0-9_\-]{32,}'''
+keywords = ["sk-"]
+entropy = 3.5
 
 [[rules]]
 id = "family-feishu-app-secret"

@@ -8,7 +8,7 @@ on:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -35,7 +35,7 @@ jobs:
       - name: Ruff
         run: |
           uv run --locked --extra dev ruff check ext deploy scripts
-          uv run --locked --extra dev ruff format --check ext deploy scripts/config_lint.py
+          uv run --locked --extra dev ruff format --check ext deploy scripts/family
 
   pytest:
     name: pytest
@@ -81,8 +81,8 @@ jobs:
           install -m 0755 gitleaks "$HOME/.local/bin/gitleaks"
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
-      - name: Gitleaks detect
-        run: gitleaks detect --source . --config .gitleaks.toml --redact --verbose
+      - name: Gitleaks
+        run: gitleaks git . --config .gitleaks.toml --redact --verbose
 
   uv-lock:
     name: uv.lock
@@ -121,4 +121,4 @@ jobs:
         run: uv sync --locked
 
       - name: Config lint
-        run: uv run --locked python scripts/config_lint.py
+        run: uv run --locked python scripts/family/config_lint.py
