@@ -1,0 +1,29 @@
+title = "nanobot family gitleaks"
+
+[extend]
+# Keep the built-in rules. Rules below are added, not a replacement.
+useDefault = true
+
+[[rules]]
+id = "family-model-sk-hex"
+description = "Provider key shaped like sk- plus 32 hex characters"
+regex = '''sk-[a-f0-9]{32}'''
+keywords = ["sk-"]
+
+[[rules]]
+id = "family-feishu-app-id"
+description = "Feishu or Lark app id"
+regex = '''cli_[a-z0-9]{16}'''
+keywords = ["cli_"]
+
+[[rules]]
+id = "family-feishu-app-secret"
+description = "Feishu or Lark app secret"
+regex = '''(?i)app[_-]?secret["'\s:=]{1,8}["'][A-Za-z0-9]{32}["']'''
+keywords = ["appsecret", "appSecret", "app_secret", "AppSecret"]
+
+[[rules]]
+id = "family-weixin-bot-token"
+description = "WeChat bot token"
+regex = '''(?i)bot_token["'\s:=]{1,8}["'][A-Za-z0-9_\-]{24,}["']'''
+keywords = ["bot_token"]

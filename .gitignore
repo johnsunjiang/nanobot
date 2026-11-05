@@ -56,9 +56,9 @@ htmlcov/
 coverage.xml
 *.cover
 
-# Lock files (project policy)
+# Lock files
+# poetry.lock stays untracked. uv.lock is tracked so CI can run `uv lock --check`.
 poetry.lock
-uv.lock
 
 # Jupyter
 .ipynb_checkpoints/

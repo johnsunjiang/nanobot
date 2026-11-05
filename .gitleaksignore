@@ -1,0 +1,14 @@
+# Upstream v0.4.0 history: fixture strings and documented placeholders.
+# These fingerprints are not live credentials. New findings are still failures.
+b37a23698df623b9e89e3d630a351d9b4f1747c8:webui/browser/history-hydration-fixture.tsx:generic-api-key:46
+74942bd1904b197a3144a4a757326fc04610c9e4:tests/tools/test_exec_env.py:generic-api-key:38
+cd2a863710ed4be21ba5426e71321fef6c05ad3d:docs/websocket.md:curl-auth-header:58
+634d0e9188c4aac893a7f863fab7f60337585851:nanobot/channels/qq/tests/test_qq_reply_context.py:generic-api-key:50
+ff6deda178824f9d90f1753caa88afa42f2fd3fd:nanobot/channels/weixin/tests/test_weixin_channel.py:generic-api-key:1098
+aa8387fb4d3f5142ac26098d0e5a860e75175e44:webui/src/tests/generic-tool-model.test.ts:generic-api-key:84
+aa8387fb4d3f5142ac26098d0e5a860e75175e44:webui/src/tests/agent-activity-cluster.test.tsx:generic-api-key:1854
+aa8387fb4d3f5142ac26098d0e5a860e75175e44:webui/src/tests/agent-activity-cluster.test.tsx:generic-api-key:1856
+b51da93cbb672c62e9680328be16b6959343521b:tests/agent/tools/test_self_tool.py:generic-api-key:42
+42de13a1a9bb1e790741f8e9ab8f3c8202cfecf1:docs/WEBSOCKET.md:curl-auth-header:234
+3823042290ec0aa9c3bc90be168f1b0ceeaebc95:tests/channels/test_weixin_channel.py:generic-api-key:349
+b1d547568114750b856bb64f5ff0678707d09f5a:tests/channels/test_weixin_channel.py:generic-api-key:349

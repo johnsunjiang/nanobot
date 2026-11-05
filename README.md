@@ -36,6 +36,8 @@
 
 🐈 **nanobot** is an ultra-lightweight, open-source, self-hosted personal AI agent framework written in Python. Use it in a browser, terminal, or chat app to work with files, remember preferences, and schedule tasks. Connect a supported model provider or local model server to supply the AI.
 
+Family checkout and upstream sync: [docs/family/upstream-sync.md](./docs/family/upstream-sync.md).
+
 ## Start Here
 
 | You want to... | Go to |
