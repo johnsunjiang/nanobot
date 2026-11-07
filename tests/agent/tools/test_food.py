@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from nanobot.agent.tools._food import (
+    ALLERGY_BLOCK_MESSAGE,
     ESTIMATE_NOTE,
     FOOD_PREFERENCES_KEY,
     QUESTION_BUDGET,
@@ -306,6 +307,42 @@ def test_builtin_recipe_blocks_when_only_the_step_text_matches() -> None:
     assert payload["status"] == "blocked_allergy"
     assert "steps" not in payload
     assert payload["recipe"] is None
+
+
+def test_user_facing_copy_matches_conversion_and_append_only_allergies() -> None:
+    properties = FoodTool.parameters.fget(None)["properties"]
+    descriptions = [
+        properties[name]["items"]["properties"]["unit"]["description"]
+        for name in ("lines", "pantry", "ingredients_on_hand", "base_ingredients")
+    ]
+    description = descriptions[0]
+    assert descriptions == [description, description, description, description]
+    assert "不要换算" not in description
+    assert "1000" in description
+    assert "茶匙和斤不换算" in description
+    converted = build_shopping_list(
+        dishes=None,
+        lines=[{"name": "盐", "quantity": 1, "unit": "千克"}],
+        people=None,
+        pantry=None,
+        pantry_confirmed=False,
+        constraints=_constraints(),
+    )
+    assert _items(converted) == [{
+        "name": "盐", "quantity": 1000, "unit": "g", "recipes": [],
+    }]
+    assert "保存、更新或清除当前会话的饮食偏好" not in ALLERGY_BLOCK_MESSAGE
+    assert "不能通过保存、更新或清除来删除" in ALLERGY_BLOCK_MESSAGE
+    blocked = build_recipe(
+        dish="凉拌花生米",
+        people=2,
+        base_servings=None,
+        base_ingredients=None,
+        steps=None,
+        constraints=_constraints(allergies=["花生"]),
+    )
+    assert blocked["message"] == ALLERGY_BLOCK_MESSAGE
+    assert "steps" not in blocked
 
 
 def test_mass_conversion_keeps_small_amounts_and_rejects_ambiguous_lines() -> None:

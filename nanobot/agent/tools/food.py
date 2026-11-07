@@ -55,7 +55,11 @@ _INGREDIENT = ObjectSchema(
         maximum=100_000,
         nullable=True,
     ),
-    unit=StringSchema("单位。克和g是同一种写法；千克和克不要换算。", max_length=16, nullable=True),
+    unit=StringSchema(
+        "单位。克和g是同一种写法。千克、公斤和kg按1000倍换算成克，升按1000倍换算成毫升。茶匙和斤不换算。",
+        max_length=16,
+        nullable=True,
+    ),
     category=StringSchema("蔬菜、肉蛋海鲜、调味、主食或其他", max_length=16, nullable=True),
     required=["name"],
     additional_properties=False,
