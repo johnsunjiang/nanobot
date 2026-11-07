@@ -43,5 +43,11 @@ def test_food_skill_loads_with_session_and_safety_limits(tmp_path: Path) -> None
         "local_restaurants",
         "external_actions",
         "当前会话",
+        "都不能删除已保存的过敏",
+        "不能变成可执行做法",
+        "交叉接触",
+        "群会话不能保存或读取",
+        "不是分支点之前的历史偏好",
+        "端到端隐私",
     ):
         assert phrase in content

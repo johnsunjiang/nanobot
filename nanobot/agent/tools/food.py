@@ -5,17 +5,19 @@
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from nanobot.agent.tools._food import (
     EPHEMERAL_SESSION_REFUSAL,
     FOOD_PREFERENCES_KEY,
+    GROUP_PREFERENCE_REFUSAL,
     INTERNAL_SESSION_REFUSAL,
     NO_SESSION_REFUSAL,
     SESSION_SCOPE_NOTE,
     SHARED_SESSION_READ_WARNING,
     SHARED_SESSION_SAVE_REFUSAL,
     UNREADABLE_PREFERENCE_WARNING,
+    UNSUPPORTED_CHANNEL_REFUSAL,
     FoodPrefs,
     apply_preference_change,
     build_constraints,
@@ -47,7 +49,12 @@ if TYPE_CHECKING:
 
 _INGREDIENT = ObjectSchema(
     name=StringSchema("食材名", min_length=1, max_length=40),
-    quantity=NumberSchema(description="数量。没有数量就省略。", minimum=0, nullable=True),
+    quantity=NumberSchema(
+        description="数量。没有数量就省略。超过100000不能汇总。",
+        minimum=0,
+        maximum=100_000,
+        nullable=True,
+    ),
     unit=StringSchema("单位。克和g是同一种写法；千克和克不要换算。", max_length=16, nullable=True),
     category=StringSchema("蔬菜、肉蛋海鲜、调味、主食或其他", max_length=16, nullable=True),
     required=["name"],
@@ -64,7 +71,7 @@ _FOOD_PARAMETERS = tool_parameters_schema(
     mode=StringSchema("cook 自己做，eat_out 外食方向，either 两种都给。", enum=["cook", "eat_out", "either"], nullable=True),
     tastes=ArraySchema(StringSchema("", max_length=32), description="口味。不能用来取消过敏。", max_items=20, nullable=True),
     avoid=ArraySchema(StringSchema("", max_length=32), description="忌口，不是过敏。", max_items=20, nullable=True),
-    allergies=ArraySchema(StringSchema("", max_length=32), description="过敏食材。硬性排除，只能通过 preferences 明确修改。", max_items=20, nullable=True),
+    allergies=ArraySchema(StringSchema("", max_length=32), description="过敏食材。硬性排除。保存、更新和清除都只能追加，不能删除已有项。", max_items=20, nullable=True),
     allow_avoid=ArraySchema(StringSchema("", max_length=32), description="用户明确说这一餐可以例外的忌口。对过敏无效。", max_items=20, nullable=True),
     ingredients_on_hand=ArraySchema(_INGREDIENT, description="用户说家里已经有的食材。", max_items=40, nullable=True),
     dish=StringSchema("菜名。", max_length=40, nullable=True),
@@ -86,7 +93,7 @@ _FOOD_PARAMETERS = tool_parameters_schema(
     pantry=ArraySchema(_INGREDIENT, description="用户确认家里已有、可以从清单扣除的食材。", max_items=40, nullable=True),
     pantry_confirmed=BooleanSchema(description="只有用户明确确认 pantry 是家里已有的食材时才为 true。", nullable=True),
     preference_action=StringSchema(
-        "get 查看，save 替换给出的字段，update 追加，clear 清除。",
+        "get 查看，save 替换口味或忌口并追加过敏，update 追加，clear 清除口味或忌口。都不能删除已有过敏。",
         enum=["get", "save", "update", "clear"],
         nullable=True,
     ),
@@ -105,7 +112,29 @@ _READ_WARNINGS = {
     "ephemeral": "这一回合不保留会话，没有读取已保存的饮食偏好。",
     "no_session": "没有当前聊天会话，只使用这次明确说出的内容。",
     "unreadable": UNREADABLE_PREFERENCE_WARNING,
+    "group_or_unknown": GROUP_PREFERENCE_REFUSAL,
+    "unsupported_channel": UNSUPPORTED_CHANNEL_REFUSAL,
 }
+
+
+def preference_route(channel: str, metadata: object, session_key: str | None) -> str:
+    """Return where a diet-preference read or write is allowed."""
+    if not session_key:
+        return "no_session"
+    if session_key == UNIFIED_SESSION_KEY:
+        return "shared"
+    if is_internal_session(session_key):
+        return "internal"
+    if channel == "websocket":
+        return "allowed"
+    if channel == "feishu" or channel.startswith("feishu."):
+        chat_type: object = None
+        if isinstance(metadata, dict):
+            chat_type = cast(dict[object, object], metadata).get("chat_type")
+        if chat_type == "p2p":
+            return "allowed"
+        return "group_or_unknown"
+    return "unsupported_channel"
 
 
 def _dump(payload: dict[str, Any], warnings: list[str] | None = None) -> str:
@@ -143,13 +172,14 @@ class FoodTool(Tool):
     @property
     def description(self) -> str:
         return (
-            "家庭吃饭：今天吃什么、按人数换算菜谱、汇总采购清单，以及保存当前会话的口味、忌口和过敏。"
+            "家庭吃饭：今天吃什么、按人数换算内置菜谱、汇总采购清单，以及在 WebUI 或飞书私聊保存口味、忌口和过敏。"
             "只使用用户明确说过的人数、时间、预算、口味、忌口、过敏和已有食材；缺人数、可用分钟或预算时只追问这些。"
-            "不要猜测城市、家庭人数或饮食禁忌。过敏是硬性排除，不能用口味或“今天想吃”取消。"
+            "不要猜测城市、家庭人数或饮食禁忌。过敏按菜名、食材和步骤里的名称包含排除，不能用口味取消，也不能删除已保存的过敏。"
+            "名称没对上不表示没有过敏风险。临时配方不能给出可执行做法。"
             "用量是家常估计，不是实测营养或价格。外食只给菜系和菜品方向；没有城市就不要推荐具体店，"
             "也不要编造商家、价格、销量、评价、配送时长或链接。"
             "不要下单、付款、联系商家、发消息或创建定时任务。"
-            "饮食偏好只写入当前会话，不写入 USER.md 或 MEMORY.md，也不与其他会话共享。"
+            "偏好只写入当前私聊会话的元数据。对话原文仍可能进入现有共享记忆或历史搜索。"
         )
 
     @property
@@ -177,15 +207,15 @@ class FoodTool(Tool):
         self, request: RequestContext | None = None,
     ) -> tuple[FoodPrefs | None, str]:
         ctx = current_request_context() if request is None else request
-        if ctx is None or not ctx.session_key:
+        if ctx is None:
             return None, "no_session"
-        if ctx.session_key == UNIFIED_SESSION_KEY:
-            return None, "shared"
-        if is_internal_session(ctx.session_key):
-            return None, "internal"
+        session_key = ctx.session_key
+        route = preference_route(ctx.channel, ctx.metadata, session_key)
+        if route != "allowed" or session_key is None:
+            return None, "no_session" if session_key is None else route
         if not ctx.persist_session:
             return None, "ephemeral"
-        payload = await self._sessions.state.read_metadata(ctx.session_key)
+        payload = await self._sessions.state.read_metadata(session_key)
         if payload is None:
             return None, "absent"
         prefs, unreadable = parse_stored_prefs(payload.get("metadata"))
@@ -226,6 +256,10 @@ class FoodTool(Tool):
             return EPHEMERAL_SESSION_REFUSAL
         if status == "no_session":
             return NO_SESSION_REFUSAL
+        if status == "group_or_unknown":
+            return GROUP_PREFERENCE_REFUSAL
+        if status == "unsupported_channel":
+            return UNSUPPORTED_CHANNEL_REFUSAL
         return None
 
     async def execute(
@@ -321,7 +355,7 @@ class FoodTool(Tool):
                     "action": "preferences",
                     "persisted": False,
                     "scope": "session",
-                    "message": UNREADABLE_PREFERENCE_WARNING + "请明确清除全部后再保存。",
+                    "message": UNREADABLE_PREFERENCE_WARNING + "这一版不能删除其中可能存在的过敏，所以没有改动。",
                     "limits": limits(),
                 })
             if refusal is not None:
@@ -329,15 +363,15 @@ class FoodTool(Tool):
             return _preference_result("get", saved, [], persisted=False)
         if refusal is not None:
             return ToolResult.error(refusal)
-        if status == "unreadable" and not (operation == "clear" and fields in (None, ["all"])):
+        if status == "unreadable":
             return _dump({
                 "status": "unreadable",
                 "action": "preferences",
                 "persisted": False,
-                "message": "当前会话里的饮食偏好无法读取。请先清除全部，再重新保存。",
+                "message": "当前会话里的饮食偏好无法读取。这一版不能删除其中可能存在的过敏，所以没有改动。",
                 "limits": limits(),
             })
-        current = None if status == "unreadable" else saved
+        current = saved
         updated, change_warnings, error = apply_preference_change(
             current,
             operation=operation,

@@ -15,10 +15,12 @@ from nanobot.agent.tools._food import (
     QUESTION_MINUTES,
     QUESTION_PEOPLE,
     FoodPrefs,
+    apply_preference_change,
     build_constraints,
     build_recipe,
     build_shopping_list,
     plan_meal,
+    scale_quantity,
 )
 from nanobot.agent.tools.base import ToolResult
 from nanobot.agent.tools.context import RequestContext, ToolContext, request_context
@@ -27,7 +29,7 @@ from nanobot.agent.tools.loader import ToolLoader
 from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.config.schema import ToolsConfig
 from nanobot.session.keys import UNIFIED_SESSION_KEY
-from nanobot.session.manager import SessionManager
+from nanobot.session.manager import Session, SessionManager, fork_session
 
 _FORBIDDEN_KEYS = {
     "url",
@@ -199,28 +201,8 @@ def test_recipe_scales_servings_and_marks_estimates() -> None:
     assert "治疗" not in json.dumps(recipe, ensure_ascii=False)
     _assert_no_live_merchant_data(recipe)
 
-    custom = build_recipe(
-        dish="宫保鸡丁",
-        people=4,
-        base_servings=2,
-        base_ingredients=[{"name": "鸡胸肉", "quantity": 100, "unit": "g", "category": "肉蛋海鲜"}],
-        steps=["鸡胸肉炒到变色并且熟透。"],
-        constraints=_constraints(),
-    )
-    assert custom["source"] == "caller_estimate"
-    assert custom["minutes"] is None
-    assert custom["ingredients"][0]["quantity"] == 200
-
-    blocked = build_recipe(
-        dish="花生酱拌面",
-        people=2,
-        base_servings=2,
-        base_ingredients=[{"name": "花生油", "quantity": 10, "unit": "ml"}],
-        steps=["拌匀。"],
-        constraints=_constraints(allergies=["花生"]),
-    )
-    assert blocked["status"] == "blocked_allergy"
-    assert "steps" not in blocked
+    assert "allergy_text_match_is_clearance" in recipe["limits"]
+    assert recipe["limits"]["allergy_text_match_is_clearance"] is False
 
 
 def test_shopping_list_merges_same_units_and_refuses_to_convert_or_deduct_early() -> None:
@@ -261,8 +243,7 @@ def test_shopping_list_merges_same_units_and_refuses_to_convert_or_deduct_early(
         ("盐", "g", 2),
         ("盐", "茶匙", 1),
         ("食盐", "g", 1),
-        ("糖", "kg", 1),
-        ("糖", "g", 5),
+        ("糖", "g", 1005),
     }
     reasons = " ".join(item["reason"] for item in conflict["unit_conflicts"])
     assert "未换算，也未合并" in reasons
@@ -293,6 +274,134 @@ def test_shopping_list_merges_same_units_and_refuses_to_convert_or_deduct_early(
     assert "清炒虾仁" in excluded["excluded_for_allergy"]
     assert all(item["name"] != "虾仁" for item in _items(excluded))
     assert any(item["name"] == "生菜" for item in _items(excluded))
+
+
+def test_caller_recipe_with_allergen_only_in_the_steps_is_not_executable() -> None:
+    payload = build_recipe(
+        dish="拌面",
+        people=2,
+        base_servings=2,
+        base_ingredients=[{"name": "面条", "quantity": 100, "unit": "g"}],
+        steps=["煮熟面条。", "加入花生酱拌匀后食用。"],
+        constraints=_constraints(allergies=["花生"]),
+    )
+    text = json.dumps(payload, ensure_ascii=False)
+    assert payload["status"] == "unverified"
+    assert payload["recipe"] is None
+    assert "steps" not in payload
+    assert "加入花生酱拌匀后食用" not in text
+    assert "交叉接触" in text
+    assert payload["limits"]["allergy_text_match_is_clearance"] is False
+
+
+def test_builtin_recipe_blocks_when_only_the_step_text_matches() -> None:
+    payload = build_recipe(
+        dish="番茄炒蛋",
+        people=2,
+        base_servings=None,
+        base_ingredients=None,
+        steps=None,
+        constraints=_constraints(allergies=["翻匀"]),
+    )
+    assert payload["status"] == "blocked_allergy"
+    assert "steps" not in payload
+    assert payload["recipe"] is None
+
+
+def test_mass_conversion_keeps_small_amounts_and_rejects_ambiguous_lines() -> None:
+    assert scale_quantity(3, 2, 1, "g") == 1.5
+    assert scale_quantity(1, 20, 1, "g") == 0.05
+    converted = build_shopping_list(
+        dishes=None,
+        lines=[
+            {"name": "盐", "quantity": 1, "unit": "kg"},
+            {"name": "盐", "quantity": 500, "unit": "g"},
+        ],
+        people=None,
+        pantry=[{"name": "盐", "quantity": 2, "unit": "kg"}],
+        pantry_confirmed=True,
+        constraints=_constraints(),
+    )
+    assert _items(converted) == []
+    assert converted["deducted"] == [{
+        "name": "盐", "quantity": 1500, "unit": "g", "remaining_to_buy": 0,
+    }]
+    ambiguous = build_shopping_list(
+        dishes=None,
+        lines=[
+            {"name": "糖", "quantity": 1, "unit": "斤"},
+            {"name": "糖", "quantity": 500, "unit": "g"},
+        ],
+        people=None,
+        pantry=None,
+        pantry_confirmed=False,
+        constraints=_constraints(),
+    )
+    assert {(item["unit"], item["quantity"]) for item in _items(ambiguous)} == {("斤", 1), ("g", 500)}
+    assert "未换算" in " ".join(item["reason"] for item in ambiguous["unit_conflicts"])
+    huge = build_shopping_list(
+        dishes=None,
+        lines=[{"name": "米", "quantity": 1e308, "unit": "g"}],
+        people=None,
+        pantry=None,
+        pantry_confirmed=False,
+        constraints=_constraints(),
+    )
+    assert huge["status"] == "invalid"
+    both = build_shopping_list(
+        dishes=None,
+        lines=[{"name": "盐", "quantity": 2, "unit": "g"}],
+        people=2,
+        pantry=None,
+        pantry_confirmed=False,
+        constraints=_constraints(),
+    )
+    assert both["status"] == "need_info"
+    assert both["groups"] == []
+
+
+def test_preferences_can_only_append_allergies() -> None:
+    stored = FoodPrefs(tastes=("清淡",), avoid=("香菜",), allergies=("花生", "虾"))
+    saved, warnings, error = apply_preference_change(
+        stored, operation="save", tastes=["花生酱"], avoid=None, allergies=[], fields=None,
+    )
+    assert error is None
+    assert saved is not None
+    assert saved.allergies == ("花生", "虾")
+    assert saved.tastes == ()
+    assert saved.avoid == ("香菜",)
+    assert warnings
+    replaced, _, replace_error = apply_preference_change(
+        stored, operation="save", tastes=None, avoid=None, allergies=["虾"], fields=None,
+    )
+    assert replace_error is None
+    assert replaced is not None
+    assert replaced.allergies == ("花生", "虾")
+    cleared, clear_warnings, clear_error = apply_preference_change(
+        stored, operation="clear", tastes=None, avoid=None, allergies=None, fields=["all"],
+    )
+    assert clear_error is None
+    assert cleared is not None
+    assert cleared.tastes == ()
+    assert cleared.avoid == ()
+    assert cleared.allergies == ("花生", "虾")
+    assert clear_warnings
+
+
+def test_fork_copies_the_current_preference_record() -> None:
+    source = Session(key="websocket:chat")
+    source.add_message("user", "先聊今天吃什么")
+    source.metadata[FOOD_PREFERENCES_KEY] = {
+        "tastes": [],
+        "avoid": [],
+        "allergies": ["花生"],
+    }
+    source.metadata["title"] = "后来才保存的过敏"
+    forked = fork_session(source, "websocket:fork", 0)
+    assert forked is not None
+    assert forked.messages == []
+    assert "title" not in forked.metadata
+    assert forked.metadata[FOOD_PREFERENCES_KEY]["allergies"] == ["花生"]
 
 
 def test_unknown_dish_does_not_invent_a_shopping_list() -> None:
@@ -333,9 +442,23 @@ async def sessions(tmp_path: Path):
         await manager.state.aclose()
 
 
-def _chat(key: str, *, persist: bool = True) -> RequestContext:
+def _chat(
+    key: str,
+    *,
+    persist: bool = True,
+    metadata: dict[str, object] | None = None,
+) -> RequestContext:
     channel, chat_id = key.split(":", 1)
-    return RequestContext(channel=channel, chat_id=chat_id, session_key=key, persist_session=persist)
+    route_metadata = dict(metadata or {})
+    if metadata is None and (channel == "feishu" or channel.startswith("feishu.")):
+        route_metadata["chat_type"] = "p2p"
+    return RequestContext(
+        channel=channel,
+        chat_id=chat_id,
+        session_key=key,
+        persist_session=persist,
+        metadata=route_metadata,
+    )
 
 
 async def _run(tool: FoodTool, ctx: RequestContext, **kwargs: object) -> str:
@@ -416,8 +539,12 @@ async def test_saved_preferences_survive_reopen_and_can_be_cleared(tmp_path: Pat
             tool, _chat("feishu:ou_a"), action="preferences", preference_action="clear",
         ))
         assert cleared["persisted"] is True
-        assert cleared["preferences"] is None
-        assert await tool.runtime_context_provider()(_chat("feishu:ou_a")) is None
+        assert cleared["preferences"]["tastes"] == []
+        assert cleared["preferences"]["avoid"] == []
+        assert cleared["preferences"]["allergies"] == ["花生"]
+        context = await tool.runtime_context_provider()(_chat("feishu:ou_a"))
+        assert context is not None
+        assert "花生" in context.content
     finally:
         await second.state.aclose()
 
@@ -446,6 +573,33 @@ async def test_shared_session_does_not_store_or_apply_preferences(sessions: Sess
     stored = await sessions.state.read_metadata(UNIFIED_SESSION_KEY)
     assert stored is not None
     assert stored["metadata"][FOOD_PREFERENCES_KEY]["allergies"] == ["花生"]
+
+
+@pytest.mark.asyncio
+async def test_group_and_other_channels_cannot_change_preferences(sessions: SessionManager) -> None:
+    tool = FoodTool(sessions)
+    group = _chat("feishu:oc_group", metadata={"chat_type": "group"})
+    unknown = _chat("feishu:oc_unknown", metadata={})
+    other = _chat("telegram:room")
+    for ctx in (group, unknown, other):
+        refused = await _run(
+            tool, ctx, action="preferences", preference_action="save", allergies=["花生"],
+        )
+        assert isinstance(refused, ToolResult)
+        assert refused.is_error
+        assert sessions.get_existing(ctx.session_key or "") is None
+    planted = "feishu:oc_group"
+    await sessions.state.get_header(planted)
+
+    def plant(metadata: dict[str, object]) -> None:
+        metadata[FOOD_PREFERENCES_KEY] = {"tastes": [], "avoid": [], "allergies": ["花生"]}
+
+    await sessions.state.mutate_metadata(planted, plant)
+    meal = json.loads(await _run(
+        tool, group, action="suggest", people=1, minutes=10, budget="随便", mode="cook",
+    ))
+    assert "凉拌花生米" not in meal["excluded_for_allergy"]
+    assert await tool.runtime_context_provider()(group) is None
 
 
 @pytest.mark.asyncio
@@ -489,6 +643,7 @@ async def test_food_tool_is_discovered_for_core_sessions(tmp_path: Path) -> None
         food = registry.get("food")
         assert food is not None
         assert "过敏" in food.description
-        assert "当前会话" in food.description
+        assert "飞书私聊" in food.description
+        assert "不能删除已保存的过敏" in food.description
     finally:
         await manager.state.aclose()

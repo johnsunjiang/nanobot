@@ -21,14 +21,17 @@ QUESTION_BUDGET = (
     "我不会把它换成市场价格。"
 )
 QUESTION_DISH = "要做哪一道菜？"
-QUESTION_BASE_SERVINGS = "这套用量是按几个人写的？"
-QUESTION_BASE_INGREDIENTS = "这道菜不在内置菜谱里。请给出基准食材的名称、数量和单位；我不会编造用量。"
-QUESTION_STEPS = "请给出家常步骤。我不会替这道菜编造做法。"
 
 SESSION_SCOPE_NOTE = (
-    "饮食偏好只保存在当前会话。新的 WebUI 对话、另一个飞书会话和其他渠道读不到，"
-    "也没有写入长期记忆。"
+    "这份饮食偏好只写在当前会话元数据里。新的 WebUI 对话、另一个飞书私聊和其他渠道读不到这份元数据。"
+    "这不是端到端隔离：对话里说过的原话，仍可能经现有共享记忆、历史摘要或会话搜索被其他会话读到。"
+    "这一版不能删除已保存的过敏。"
 )
+GROUP_PREFERENCE_REFUSAL = (
+    "群会话，或无法确认是飞书私聊的会话，不能保存、修改或读取饮食偏好。"
+    "请改在 WebUI 对话或飞书私聊里操作。"
+)
+UNSUPPORTED_CHANNEL_REFUSAL = "饮食偏好只接受 WebUI 和飞书私聊。这个渠道不能保存或读取。"
 SHARED_SESSION_SAVE_REFUSAL = (
     "当前开启了所有渠道共用的会话。饮食偏好不能保存在这里，否则其他聊天会看到过敏和忌口。"
     "这次没有保存。请在各自的 WebUI 对话或飞书私聊里使用分开的会话后再保存。"
@@ -40,6 +43,18 @@ EPHEMERAL_SESSION_REFUSAL = "这一回合不保留会话，饮食偏好没有保
 UNREADABLE_PREFERENCE_WARNING = "当前会话里的饮食偏好无法读取，这次没有套用。"
 
 ESTIMATE_NOTE = "用量是按人数换算的家常估计，不是实测营养或价格。不判断食疗或医疗效果。"
+ALLERGY_LIMIT = (
+    "名称包含关系只覆盖菜名、食材和步骤里写出的字，不是医学核对，也不能证明没有过敏风险。"
+    "交叉接触、共用器具、酱料和供应商未标明的成分都无法判断。"
+)
+ALLERGY_APPEND_ONLY = "这一版不能删除已保存的过敏。保存、更新和清除都只会保留或追加。"
+UNVERIFIED_RECIPE_MESSAGE = (
+    "这道菜不在已核对的家常菜谱里。临时菜名、用量和步骤无法核实酱料、包装配料或供应商成分，"
+    "所以不返回可执行做法。交叉接触和共用器具也无法判断。名称没有对上，也不表示可以安全食用。"
+)
+_MAX_QUANTITY = 100_000.0
+_MASS_TO_G = {"g": 1.0, "kg": 1000.0}
+_VOLUME_TO_ML = {"ml": 1.0, "l": 1000.0}
 NO_CITY_NOTE = (
     "没有得到城市，所以不推荐具体饭店。下面只有菜系和菜品方向，"
     "没有商家、实时价格、销量、评价、配送时长或链接。"
@@ -55,7 +70,6 @@ _MAX_PEOPLE = 20
 _MAX_MINUTES = 240
 _CATEGORIES = ("蔬菜", "肉蛋海鲜", "调味", "主食", "其他")
 _COUNT_UNITS = frozenset({"个", "只", "颗", "枚", "瓣", "根", "把", "片"})
-_MASS_VOLUME_UNITS = frozenset({"g", "kg", "ml", "l"})
 _UNIT_ALIASES = {
     "克": "g",
     "g": "g",
@@ -162,9 +176,14 @@ def limits() -> dict[str, Any]:
         "merchants": False,
         "medical_claims": False,
         "external_actions": [],
-        "preference_scope": "session",
+        "preference_scope": "session_metadata",
+        "conversation_text_isolation": False,
         "writes_long_term_memory": False,
-        "allergy_match": "name_contains",
+        "allergy_match": "listed_name_contains",
+        "allergy_text_match_is_clearance": False,
+        "cross_contact_known": False,
+        "supplier_ingredients_known": False,
+        "allergies_append_only": True,
     }
 
 
@@ -590,40 +609,50 @@ def apply_preference_change(
         unknown = [field for field in selected if field not in {"tastes", "avoid", "allergies", "all"}]
         if unknown:
             return None, [], "清除字段只能是口味、忌口、过敏或全部。"
-        if "all" in selected:
-            return None, [], None
-        remaining = {
-            "tastes": stored.tastes,
-            "avoid": stored.avoid,
-            "allergies": stored.allergies,
-        }
-        for field in selected:
-            remaining[field] = ()
-        prefs = FoodPrefs(remaining["tastes"], remaining["avoid"], remaining["allergies"])
-        return (None if prefs.is_empty() else prefs), [], None
+        clear_tastes = "all" in selected or "tastes" in selected
+        clear_avoid = "all" in selected or "avoid" in selected
+        warnings = [ALLERGY_APPEND_ONLY] if stored.allergies and (
+            "all" in selected or "allergies" in selected
+        ) else []
+        prefs = FoodPrefs(
+            () if clear_tastes else stored.tastes,
+            () if clear_avoid else stored.avoid,
+            stored.allergies,
+        )
+        return (None if prefs.is_empty() else prefs), warnings, None
     if operation not in {"save", "update"}:
         return None, [], "偏好动作只能是 get、save、update 或 clear。"
     if cleaned_tastes is None and cleaned_avoid is None and cleaned_allergies is None:
         return None, [], "保存或更新时，至少要给出口味、忌口或过敏中的一项。"
+    next_allergies = _dedupe([*stored.allergies, *(cleaned_allergies or [])])
+    kept_allergies = _allergies_kept_from_removal(stored.allergies, cleaned_allergies)
     if operation == "save":
-        next_allergies = stored.allergies if cleaned_allergies is None else tuple(cleaned_allergies)
         next_avoid, _ = _replace_field(stored.avoid, cleaned_avoid, next_allergies, is_taste=False)
         next_tastes, overridden = _replace_field(
             stored.tastes, cleaned_tastes, next_allergies, is_taste=True
         )
     else:
-        next_allergies = _dedupe([*stored.allergies, *(cleaned_allergies or [])])
         next_avoid = _dedupe([*stored.avoid, *(cleaned_avoid or [])])
         next_tastes, overridden = _strip_tastes(
             _dedupe([*stored.tastes, *(cleaned_tastes or [])]),
             next_allergies,
         )
-    warnings = [
+    warnings = [f"{ALLERGY_APPEND_ONLY}仍保留：{'、'.join(kept_allergies)}。"] if kept_allergies else []
+    warnings.extend(
         f"已保留过敏「{item}」，没有把它记成口味。"
         for item in overridden
-    ]
+    )
     prefs = FoodPrefs(next_tastes, next_avoid, next_allergies)
     return (None if prefs.is_empty() else prefs), warnings, None
+
+
+def _allergies_kept_from_removal(
+    stored: tuple[str, ...], supplied: list[str] | None,
+) -> list[str]:
+    if supplied is None:
+        return []
+    supplied_keys = {normalize_name(item) for item in supplied}
+    return [item for item in stored if normalize_name(item) not in supplied_keys]
 
 
 def _integer_in_range(value: int | None, *, upper: int, label: str) -> str | None:
@@ -634,10 +663,10 @@ def _integer_in_range(value: int | None, *, upper: int, label: str) -> str | Non
     return None
 
 
-def _people_error(people: int | None, *, required: bool) -> str | None:
+def _people_error(people: object, *, required: bool) -> str | None:
     if people is None:
         return QUESTION_PEOPLE if required else None
-    if isinstance(people, bool) or not 1 <= people <= _MAX_PEOPLE:
+    if isinstance(people, bool) or not isinstance(people, int) or not 1 <= people <= _MAX_PEOPLE:
         return f"人数需要是1到{_MAX_PEOPLE}的整数。"
     return None
 
@@ -667,6 +696,7 @@ def _dish_parts(dish: Dish) -> list[str]:
         *dish.tags,
         *dish.allergens,
         *(ingredient.name for ingredient in dish.ingredients),
+        *dish.steps,
     ]
 
 
@@ -698,6 +728,7 @@ def _safety_notes(parts: list[str]) -> list[str]:
             if note not in notes:
                 notes.append(note)
     notes.append(ESTIMATE_NOTE)
+    notes.append(ALLERGY_LIMIT)
     return notes
 
 
@@ -866,14 +897,12 @@ def scale_quantity(quantity: float, base_servings: int, people: int, unit: str) 
     scaled = quantity * people / base_servings
     if unit in _COUNT_UNITS:
         rounded = math.floor(scaled * 2 + 0.5) / 2
-        if quantity > 0 and rounded <= 0:
-            return 0.5
+        if rounded == 0 and scaled > 0:
+            return round(scaled, 2)
         return rounded
-    if unit in _MASS_VOLUME_UNITS:
-        if quantity <= 0:
-            return 0.0
-        return float(max(1, math.floor(scaled + 0.5)))
-    return round(scaled, 1)
+    if quantity <= 0:
+        return 0.0
+    return round(scaled, 3)
 
 
 def _ingredient_json(ingredient: Ingredient, *, quantity: float) -> dict[str, Any]:
@@ -922,7 +951,7 @@ def _blocked_recipe(dish_name: str, people: int | None, allergens: list[str]) ->
         recipe=None,
         allergens=allergens,
         message=ALLERGY_BLOCK_MESSAGE,
-        safety_notes=["过敏原仍然排除。不判断食疗或医疗效果。"],
+        safety_notes=["过敏原仍然排除。不判断食疗或医疗效果。", ALLERGY_LIMIT],
     )
 
 
@@ -939,8 +968,14 @@ def parse_ingredient_dict(raw: object) -> tuple[Ingredient | None, str | None]:
     quantity = blob.get("quantity")
     if quantity is None:
         parsed_quantity: float | None = None
-    elif isinstance(quantity, bool) or not isinstance(quantity, (int, float)) or quantity < 0:
-        return None, f"食材“{display}”的数量无效。"
+    elif (
+        isinstance(quantity, bool)
+        or not isinstance(quantity, (int, float))
+        or isinstance(quantity, float) and not math.isfinite(quantity)
+        or quantity < 0
+        or quantity > _MAX_QUANTITY
+    ):
+        return None, f"食材“{display}”的数量无效或超出可汇总范围。"
     else:
         parsed_quantity = float(quantity)
     unit_value = blob.get("unit")
@@ -954,6 +989,19 @@ def parse_ingredient_dict(raw: object) -> tuple[Ingredient | None, str | None]:
     return Ingredient(display, parsed_quantity, normalize_unit(unit), category), None
 
 
+def _unverified_recipe(dish_name: str, *, caller_supplied_recipe: bool) -> dict[str, Any]:
+    return _envelope(
+        "recipe",
+        "unverified",
+        dish=dish_name,
+        recipe=None,
+        caller_supplied_recipe_ignored=caller_supplied_recipe,
+        questions=["请改用内置菜谱中的菜名。临时配方不能提供可执行做法。"],
+        message=UNVERIFIED_RECIPE_MESSAGE,
+        safety_notes=[ALLERGY_LIMIT],
+    )
+
+
 def build_recipe(
     *,
     dish: str | None,
@@ -963,71 +1011,21 @@ def build_recipe(
     steps: Sequence[object] | None,
     constraints: MealConstraints,
 ) -> dict[str, Any]:
+    if dish is None or not dish.strip():
+        return _envelope("recipe", "need_info", questions=[QUESTION_DISH], recipe=None)
+    catalog_dish = find_dish(dish)
+    if catalog_dish is None:
+        supplied = bool(base_servings is not None or base_ingredients or steps)
+        return _unverified_recipe(dish.strip(), caller_supplied_recipe=supplied)
     people_error = _people_error(people, required=False)
     if people is None:
         return _envelope("recipe", "need_info", questions=[QUESTION_PEOPLE], recipe=None)
     if people_error is not None:
         return _envelope("recipe", "invalid", message=people_error)
-    if dish is None or not dish.strip():
-        return _envelope("recipe", "need_info", questions=[QUESTION_DISH], recipe=None)
-    catalog_dish = find_dish(dish)
-    if catalog_dish is not None:
-        hits = _hits(_dish_parts(catalog_dish), constraints.allergies)
-        if hits:
-            return _blocked_recipe(catalog_dish.name, people, hits)
-        return _recipe_from_dish(catalog_dish, people, source="builtin_catalog")
-    questions: list[str] = []
-    if base_servings is None:
-        questions.append(QUESTION_BASE_SERVINGS)
-    elif isinstance(base_servings, bool) or not 1 <= base_servings <= _MAX_PEOPLE:
-        return _envelope("recipe", "invalid", message=f"基准人数需要是1到{_MAX_PEOPLE}的整数。")
-    if not base_ingredients:
-        questions.append(QUESTION_BASE_INGREDIENTS)
-    cleaned_steps: list[str] = []
-    for step in steps or []:
-        if not isinstance(step, str):
-            return _envelope("recipe", "invalid", message="步骤必须是文字。")
-        text = " ".join(step.split()).strip()
-        if text:
-            if len(text) > 200:
-                return _envelope("recipe", "invalid", message="有一条步骤超过200个字。")
-            cleaned_steps.append(text)
-    if not cleaned_steps:
-        questions.append(QUESTION_STEPS)
-    if questions:
-        return _envelope(
-            "recipe",
-            "need_info",
-            questions=questions,
-            dish=dish.strip(),
-            recipe=None,
-        )
-    assert base_servings is not None
-    parsed: list[Ingredient] = []
-    for raw in base_ingredients or []:
-        ingredient, error = parse_ingredient_dict(raw)
-        if error is not None or ingredient is None:
-            return _envelope("recipe", "invalid", message=error or "食材无效。")
-        if ingredient.quantity is None:
-            return _envelope("recipe", "need_info", questions=[QUESTION_BASE_INGREDIENTS], recipe=None)
-        parsed.append(ingredient)
-    display = " ".join(dish.split()).strip()
-    parts = [display, *(ingredient.name for ingredient in parsed)]
-    hits = _hits(parts, constraints.allergies)
+    hits = _hits(_dish_parts(catalog_dish), constraints.allergies)
     if hits:
-        return _blocked_recipe(display, people, hits)
-    custom = Dish(
-        display,
-        base_servings,
-        0,
-        (),
-        tuple(hits),
-        tuple(parsed),
-        tuple(cleaned_steps),
-    )
-    payload = _recipe_from_dish(custom, people, source="caller_estimate")
-    payload["minutes"] = None
-    return payload
+        return _blocked_recipe(catalog_dish.name, people, hits)
+    return _recipe_from_dish(catalog_dish, people, source="builtin_catalog")
 
 
 @dataclass
@@ -1039,6 +1037,23 @@ class _MergedLine:
     recipes: list[str]
 
 
+def _canonicalize(ingredient: Ingredient) -> tuple[Ingredient | None, str | None]:
+    if ingredient.quantity is None:
+        return ingredient, None
+    if ingredient.unit in _MASS_TO_G:
+        quantity = ingredient.quantity * _MASS_TO_G[ingredient.unit]
+        unit = "g"
+    elif ingredient.unit in _VOLUME_TO_ML:
+        quantity = ingredient.quantity * _VOLUME_TO_ML[ingredient.unit]
+        unit = "ml"
+    else:
+        quantity = ingredient.quantity
+        unit = ingredient.unit
+    if quantity > _MAX_QUANTITY:
+        return None, f"“{ingredient.name}”换算后的数量超出可汇总范围。"
+    return Ingredient(ingredient.name, quantity, unit, ingredient.category), None
+
+
 def _add_line(
     merged: dict[tuple[str, str], _MergedLine],
     ingredient: Ingredient,
@@ -1047,20 +1062,24 @@ def _add_line(
 ) -> str | None:
     if ingredient.quantity is None:
         return f"“{ingredient.name}”没有数量，无法汇总。"
-    key = (normalize_name(ingredient.name), ingredient.unit)
+    canonical, error = _canonicalize(ingredient)
+    quantity = None if canonical is None else canonical.quantity
+    if error is not None or canonical is None or quantity is None:
+        return error or f"“{ingredient.name}”的数量无效。"
+    key = (normalize_name(canonical.name), canonical.unit)
     current = merged.get(key)
     if current is None:
         merged[key] = _MergedLine(
-            ingredient.name,
-            ingredient.quantity,
-            ingredient.unit,
-            ingredient.category,
+            canonical.name,
+            quantity,
+            canonical.unit,
+            canonical.category,
             [recipe] if recipe else [],
         )
         return None
-    current.quantity += ingredient.quantity
-    if current.category == "其他" and ingredient.category != "其他":
-        current.category = ingredient.category
+    current.quantity += quantity
+    if current.category == "其他" and canonical.category != "其他":
+        current.category = canonical.category
     if recipe and recipe not in current.recipes:
         current.recipes.append(recipe)
     return None
@@ -1082,6 +1101,16 @@ def build_shopping_list(
     people_error = _people_error(people, required=False)
     if people is not None and people_error is not None:
         return _envelope("shopping_list", "invalid", message=people_error)
+    if lines and people is not None:
+        return _envelope(
+            "shopping_list",
+            "need_info",
+            questions=[
+                "采购行和人数不能一起用。请只传内置菜和人数，或只传已经算好数量的采购行并且不要带人数。"
+                "我不会猜测这些行要不要按人数放大。"
+            ],
+            groups=[],
+        )
     merged: dict[tuple[str, str], _MergedLine] = {}
     excluded: list[str] = []
     for request in dishes or []:
@@ -1169,6 +1198,10 @@ def build_shopping_list(
             ingredient, error = parse_ingredient_dict(raw)
             if error is not None or ingredient is None:
                 return _envelope("shopping_list", "invalid", message=error or "家里的食材无效。")
+            canonical, canon_error = _canonicalize(ingredient)
+            if canon_error is not None or canonical is None:
+                return _envelope("shopping_list", "invalid", message=canon_error or "家里的食材无效。")
+            ingredient = canonical
             key_name = normalize_name(ingredient.name)
             same_name = [line for line in merged.values() if normalize_name(line.name) == key_name]
             if not same_name:
