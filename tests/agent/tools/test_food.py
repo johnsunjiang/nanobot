@@ -26,6 +26,7 @@ from nanobot.agent.tools._food import (
 from nanobot.agent.tools.base import ToolResult
 from nanobot.agent.tools.context import RequestContext, ToolContext, request_context
 from nanobot.agent.tools.food import FoodTool
+from nanobot.agent.tools.food_art import ART_IDS, DISH_ART, build_presentation, local_art_path
 from nanobot.agent.tools.loader import ToolLoader
 from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.config.schema import ToolsConfig
@@ -455,11 +456,110 @@ def test_unknown_dish_does_not_invent_a_shopping_list() -> None:
     assert "不会替这道菜编造用量" in payload["questions"][0]
 
 
+def test_illustrations_are_local_schematics_and_blocked_recipes_have_none() -> None:
+    art_dir = Path(__file__).resolve().parents[3] / "webui" / "public" / "food-art"
+    assert set(DISH_ART) >= {"番茄炒蛋", "清炒虾仁", "凉拌花生米"}
+    for art_id in ART_IDS:
+        svg = (art_dir / f"{art_id}.svg").read_text(encoding="utf-8")
+        assert "示意图" in svg
+        lowered = svg.lower()
+        assert "<script" not in lowered
+        assert "href=" not in lowered
+        assert "xlink:" not in lowered
+    assert local_art_path("tomato-egg") == "/food-art/tomato-egg.svg"
+    assert local_art_path("../secret") is None
+    assert local_art_path("https://evil.example/a.svg") is None
+    assert local_art_path("/etc/passwd") is None
+
+    blocked = build_recipe(
+        dish="凉拌花生米",
+        people=2,
+        base_servings=None,
+        base_ingredients=None,
+        steps=None,
+        constraints=_constraints(allergies=["花生"]),
+    )
+    web = build_presentation(blocked, channel="websocket")
+    feishu = build_presentation(blocked, channel="feishu")
+    assert web["image_policy"] == "none"
+    assert web["cards"] == []
+    assert web["photograph"] is False
+    assert "![" not in web["reply_markdown"]
+    assert "/food-art/" not in web["reply_markdown"]
+    assert "步骤" not in web["reply_markdown"]
+    assert "![" not in feishu["feishu_text"]
+    assert "|" not in feishu["feishu_text"]
+
+    shown = build_presentation(
+        plan_meal(
+            people=2, minutes=30, budget="随便", mode="cook",
+            on_hand=["鸡蛋", "番茄"], constraints=_constraints(),
+        ),
+        channel="websocket",
+    )
+    assert shown["image_policy"] == "schematic_local"
+    assert shown["cards"][0]["art_id"] == "tomato-egg"
+    assert shown["cards"][0]["alt"].endswith("示意图")
+    assert "/food-art/tomato-egg.svg" in shown["web_markdown"]
+    assert "![" not in build_presentation(
+        plan_meal(
+            people=2, minutes=30, budget="随便", mode="cook",
+            on_hand=["鸡蛋", "番茄"], constraints=_constraints(),
+        ),
+        channel="feishu",
+    )["reply_markdown"]
+    shopping = build_presentation(
+        build_shopping_list(
+            dishes=[{"name": "番茄炒蛋", "people": 2}],
+            lines=None,
+            people=None,
+            pantry=None,
+            pantry_confirmed=False,
+            constraints=_constraints(),
+        ),
+        channel="feishu",
+    )
+    assert "蔬菜" in shopping["feishu_text"]
+    assert "|" not in shopping["feishu_text"]
+    assert "![" not in shopping["feishu_text"]
+
+
+@pytest.mark.asyncio
+async def test_tool_reply_keeps_art_on_web_and_off_feishu(sessions: SessionManager) -> None:
+    tool = FoodTool(sessions)
+    web = json.loads(await _run(
+        tool, _chat("websocket:chat-art"),
+        action="suggest", people=2, minutes=30, budget="随便", mode="cook",
+        ingredients_on_hand=[{"name": "鸡蛋"}, {"name": "番茄"}],
+    ))
+    assert web["presentation"]["image_policy"] == "schematic_local"
+    assert web["presentation"]["photograph"] is False
+    assert "/food-art/tomato-egg.svg" in web["presentation"]["reply_markdown"]
+    feishu = json.loads(await _run(
+        tool, _chat("feishu:ou_art"),
+        action="suggest", people=2, minutes=30, budget="随便", mode="cook",
+        ingredients_on_hand=[{"name": "鸡蛋"}, {"name": "番茄"}],
+    ))
+    assert "![" not in feishu["presentation"]["reply_markdown"]
+    assert "|" not in feishu["presentation"]["reply_markdown"]
+    assert "不发送图片" in feishu["presentation"]["reply_markdown"]
+    blocked = json.loads(await _run(
+        tool, _chat("websocket:chat-art"),
+        action="recipe", dish="凉拌花生米", people=2, allergies=["花生"],
+    ))
+    assert blocked["status"] == "blocked_allergy"
+    assert "steps" not in blocked
+    assert blocked["presentation"]["cards"] == []
+    assert blocked["presentation"]["image_policy"] == "none"
+    assert "/food-art/" not in blocked["presentation"]["reply_markdown"]
+    _assert_no_live_merchant_data(web)
+
+
 def test_food_modules_do_not_import_outbound_services() -> None:
     """Static import check. It does not execute a model turn."""
     root = Path(__file__).resolve().parents[3] / "nanobot" / "agent" / "tools"
     forbidden = ("nanobot.cron", "nanobot.bus", "nanobot.agent.tools.web", "nanobot.agent.tools.message", "httpx", "requests")
-    for name in ("_food.py", "food.py"):
+    for name in ("_food.py", "food.py", "food_art.py"):
         tree = ast.parse((root / name).read_text(encoding="utf-8"))
         imported: set[str] = set()
         for node in ast.walk(tree):

@@ -20,6 +20,7 @@ import { useTranslation } from "react-i18next";
 import { MarkdownText } from "@/components/MarkdownText";
 import { cliAppInitials, mcpPresetInitials } from "@/components/CliAppMentionText";
 import { ActivityStep } from "@/components/thread/activity/ActivityStep";
+import { FoodResultCard, foodPresentationsFromMessages } from "@/components/thread/FoodResultCard";
 import { coalesceActivityMessages } from "@/components/thread/activity/activity-message-model";
 import {
   compactActivityPath,
@@ -318,6 +319,10 @@ function FoldedAgentActivity({
   }, [onLoadTraceDetails, traceDetailScope]);
 
   const hasVisibleActivity = reasoningSteps > 0 || toolCalls > 0 || modelSegments > 0 || cliCount > 0 || mcpCount > 0 || fileCount > 0;
+  const foodCards = useMemo(
+    () => foodPresentationsFromMessages(activityMessages),
+    [activityMessages],
+  );
   const hasOnlyFileActivity = fileCount > 0 && activityMessages.every(messageHasOnlyFileActivity);
   const durationMs = activityDurationMs(
     activityMessages,
@@ -404,7 +409,7 @@ function FoldedAgentActivity({
     return () => window.clearTimeout(timeout);
   }, [isTurnStreaming, userToggledOuter]);
 
-  if (!hasVisibleActivity && !isTurnStreaming) return null;
+  if (!hasVisibleActivity && !isTurnStreaming && foodCards.length === 0) return null;
 
   if (hasOnlyFileActivity && expanded === undefined) {
     return (
@@ -453,6 +458,9 @@ function FoldedAgentActivity({
           onOpenFilePreview={onOpenFilePreview}
         />
       </ThinkingReasoningShell>
+      {foodCards.map((presentation, index) => (
+        <FoodResultCard key={`food-result-${index}`} presentation={presentation} />
+      ))}
     </div>
   );
 }

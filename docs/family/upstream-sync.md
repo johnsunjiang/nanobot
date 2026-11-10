@@ -22,7 +22,7 @@ git fetch upstream --tags
 
 | 文件 | 家庭侧保留什么 | 怎么处理 |
 |---|---|---|
-| `.github/workflows/ci.yml` | D1 的五项检查：`ruff`、`pytest`、`gitleaks`、`uv.lock`、`config-lint`。ruff 和 pytest 还要保留美食工具与 `tests/agent/tools/test_food.py`、`tests/agent/test_builtin_food_skill.py` | 保留本仓库的 workflow。不要换回上游的 Test Suite，也不要删掉美食检查。 |
+| `.github/workflows/ci.yml` | D1 的五项检查：`ruff`、`pytest`、`gitleaks`、`uv.lock`、`config-lint`。ruff 和 pytest 还要保留 `food.py`、`food_art.py`、`_food.py`、`tests/agent/tools/test_food.py`、`tests/agent/test_builtin_food_skill.py`，以及 `webui/src/tests/food-result-card.test.tsx` | 保留本仓库的 workflow。不要换回上游的 Test Suite，也不要删掉美食检查。 |
 | `.gitignore` | 跟踪 `uv.lock`（上游忽略它） | 保留「不忽略 `uv.lock`」这一行。`poetry.lock` 继续忽略。 |
 | `README.md` | 指向本文的一行链接 | 保留那一行，其余用上游 README。 |
 

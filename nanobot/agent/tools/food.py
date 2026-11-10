@@ -30,6 +30,7 @@ from nanobot.agent.tools._food import (
 )
 from nanobot.agent.tools.base import Tool, ToolResult, tool_parameters
 from nanobot.agent.tools.context import RequestContext, ToolContext, current_request_context
+from nanobot.agent.tools.food_art import build_presentation
 from nanobot.agent.tools.schema import (
     ArraySchema,
     BooleanSchema,
@@ -144,6 +145,9 @@ def preference_route(channel: str, metadata: object, session_key: str | None) ->
 def _dump(payload: dict[str, Any], warnings: list[str] | None = None) -> str:
     if warnings:
         payload["warnings"] = warnings
+    ctx = current_request_context()
+    channel = ctx.channel if ctx is not None else ""
+    payload["presentation"] = build_presentation(payload, channel=channel)
     return json.dumps(payload, ensure_ascii=False)
 
 
@@ -184,6 +188,8 @@ class FoodTool(Tool):
             "也不要编造商家、价格、销量、评价、配送时长或链接。"
             "不要下单、付款、联系商家、发消息或创建定时任务。"
             "偏好只写入当前私聊会话的元数据。对话原文仍可能进入现有共享记忆或历史搜索。"
+            "回复原样使用 presentation.reply_markdown。网页图只来自本地示意图；飞书回复没有图片和表格。"
+            "过敏拦截或未核实菜谱不配图，也不给做法。"
         )
 
     @property

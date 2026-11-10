@@ -30,6 +30,8 @@ description: 回答今天吃什么、按人数换算菜谱和采购清单，并�
 
 `external_actions` 为空。不要下单，不要付款，不要联系商家，不要发消息，不要创建定时任务，也不要为了完成吃饭请求调用 `cron`、`message` 或搜索工具。
 
+回复时原样使用 `presentation.reply_markdown`。网页里的图只指向 `/food-art/` 示意图，不是实拍。飞书会话的 `reply_markdown` 没有图片，也没有 Markdown 表格。不要自己补图片网址、表格或做法。`image_policy` 为 `none` 时不要配图。示意图不能说明这道菜是否安全。
+
 `status` 为 `blocked_allergy` 或 `unverified` 时不要补写做法。转述 `safety_notes`。不要承诺食疗或医疗效果。
 
 偏好元数据只保留在这一条 WebUI 对话或这一个飞书私聊里。群会话不能保存或读取。不要说已经记住到所有聊天，也不要说其他会话永远看不到用户说过的话。从对话分支出去时复制的是当前偏好，不是分支点之前的历史偏好。所有渠道共用的会话会拒绝保存。
