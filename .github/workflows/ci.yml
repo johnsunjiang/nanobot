@@ -36,6 +36,7 @@ jobs:
         run: |
           uv run --locked --extra dev ruff check ext deploy scripts
           uv run --locked --extra dev ruff format --check ext deploy scripts/family
+          uv run --locked --extra dev ruff check nanobot/agent/tools/food.py nanobot/agent/tools/food_art.py nanobot/agent/tools/_food.py tests/agent/tools/test_food.py tests/agent/test_builtin_food_skill.py
 
   pytest:
     name: pytest
@@ -56,7 +57,10 @@ jobs:
         run: uv sync --locked --extra dev
 
       - name: Pytest ext/
-        run: uv run --locked --extra dev python -m pytest ext/ --confcutdir=ext -q -o asyncio_default_fixture_loop_scope=function
+        run: |
+          uv run --locked --extra dev python -m pytest ext/ --confcutdir=ext -q -o asyncio_default_fixture_loop_scope=function
+          uv run --locked --extra dev python -m pytest tests/agent/tools/test_food.py tests/agent/test_builtin_food_skill.py -q -o asyncio_default_fixture_loop_scope=function
+          cd webui && npm ci && npx vitest run src/tests/food-result-card.test.tsx
 
   gitleaks:
     name: gitleaks

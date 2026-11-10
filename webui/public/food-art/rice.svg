@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 120" role="img">
+  <rect width="160" height="120" rx="16" fill="#fafaf9"/>
+  <circle cx="62" cy="52" r="24" fill="#e7e5e4"/>
+  <circle cx="98" cy="60" r="16" fill="#a8a29e"/>
+  <text x="80" y="104" text-anchor="middle" font-size="14" font-family="sans-serif" fill="#44403c">示意图</text>
+  <text x="80" y="22" text-anchor="middle" font-size="11" font-family="sans-serif" fill="#57534e">米饭</text>
+</svg>
